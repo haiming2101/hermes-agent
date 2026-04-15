@@ -456,6 +456,7 @@ def switch_model(
         validate_requested_model,
         opencode_model_api_mode,
     )
+    from hermes_cli.model_health import get_last_known_working_model
     from hermes_cli.runtime_provider import resolve_runtime_provider
 
     resolved_alias = ""
@@ -685,17 +686,57 @@ def switch_model(
             target_provider,
             api_key=api_key,
             base_url=base_url,
+            strict=True,
         )
     except Exception:
         validation = {
-            "accepted": True,
-            "persist": True,
+            "accepted": False,
+            "persist": False,
             "recognized": False,
-            "message": None,
+            "message": "Model validation failed unexpectedly.",
         }
 
     if not validation.get("accepted"):
         msg = validation.get("message", "Invalid model")
+        # If strict validation rejects the target, fall back to the most recent
+        # known-good route (if available) instead of leaving the user with a
+        # broken model setting.
+        last_good = get_last_known_working_model(
+            exclude_provider=target_provider,
+            exclude_model=new_model,
+            exclude_base_url=base_url,
+        )
+        if last_good:
+            lg_provider = (last_good.get("provider") or "").strip()
+            lg_model = (last_good.get("model") or "").strip()
+            lg_base_url = (last_good.get("base_url") or "").strip()
+            if lg_provider and lg_model:
+                try:
+                    lg_runtime = resolve_runtime_provider(
+                        requested=lg_provider,
+                        explicit_base_url=lg_base_url or None,
+                    )
+                    lg_api_mode = lg_runtime.get("api_mode", "") or determine_api_mode(
+                        lg_provider, lg_runtime.get("base_url", "")
+                    )
+                    return ModelSwitchResult(
+                        success=True,
+                        new_model=lg_model,
+                        target_provider=lg_provider,
+                        provider_changed=(lg_provider != current_provider),
+                        api_key=lg_runtime.get("api_key", ""),
+                        base_url=lg_runtime.get("base_url", "") or lg_base_url,
+                        api_mode=lg_api_mode,
+                        warning_message=(
+                            f"{msg} | Falling back to last known working model: "
+                            f"{lg_model} via {get_label(lg_provider)}"
+                        ),
+                        provider_label=get_label(lg_provider),
+                        is_global=is_global,
+                    )
+                except Exception:
+                    pass
+
         return ModelSwitchResult(
             success=False,
             new_model=new_model,
@@ -1086,5 +1127,4 @@ def list_authenticated_providers(
     results.sort(key=lambda r: (not r["is_current"], -r["total_models"]))
 
     return results
-
 

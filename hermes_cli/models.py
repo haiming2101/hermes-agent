@@ -1771,6 +1771,7 @@ def validate_requested_model(
     *,
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
+    strict: bool = False,
 ) -> dict[str, Any]:
     """
     Validate a ``/model`` value for the active provider.
@@ -1809,6 +1810,27 @@ def validate_requested_model(
             "persist": False,
             "recognized": False,
             "message": "Model names cannot contain spaces.",
+        }
+
+    # Provider-aware syntax checks (docs-aligned):
+    # - Aggregators (OpenRouter/Nous) should use vendor/model[:variant].
+    # - Most direct providers should not include a leading slash.
+    if requested.startswith("/") or requested.endswith("/"):
+        return {
+            "accepted": False,
+            "persist": False,
+            "recognized": False,
+            "message": "Model name has invalid leading/trailing '/'.",
+        }
+    if normalized in {"openrouter", "nous", "ai-gateway"} and "/" not in requested:
+        return {
+            "accepted": False,
+            "persist": False,
+            "recognized": False,
+            "message": (
+                f"Model `{requested}` is not in vendor/model format required by "
+                f"{provider_label(normalized)} (e.g. `openai/gpt-5.4`)."
+            ),
         }
 
     if normalized == "custom":
@@ -1851,10 +1873,18 @@ def validate_requested_model(
                 )
 
             return {
-                "accepted": True,
-                "persist": True,
+                "accepted": not strict,
+                "persist": not strict,
                 "recognized": False,
-                "message": message,
+                "message": (
+                    message
+                    if not strict
+                    else (
+                        f"Rejected: `{requested}` was not found in this custom endpoint's "
+                        f"model listing ({probe.get('probed_url')})."
+                        f"{suggestion_text}"
+                    )
+                ),
             }
 
         message = (
@@ -1865,10 +1895,17 @@ def validate_requested_model(
             message += f"\n  If this server expects `/v1`, try base URL: `{probe.get('suggested_base_url')}`"
 
         return {
-            "accepted": True,
-            "persist": True,
+            "accepted": not strict,
+            "persist": not strict,
             "recognized": False,
-            "message": message,
+            "message": (
+                message
+                if not strict
+                else (
+                    f"Rejected: could not validate `{requested}` because the custom endpoint "
+                    f"model listing is unreachable at `{probe.get('probed_url')}`."
+                )
+            ),
         }
 
     # OpenAI Codex has its own catalog path; /v1/models probing is not the right validation path.
@@ -1900,13 +1937,20 @@ def validate_requested_model(
             if suggestions:
                 suggestion_text = "\n  Similar models: " + ", ".join(f"`{s}`" for s in suggestions)
             return {
-                "accepted": True,
-                "persist": True,
+                "accepted": not strict,
+                "persist": not strict,
                 "recognized": False,
                 "message": (
-                    f"Note: `{requested}` was not found in the OpenAI Codex model listing. "
-                    f"It may still work if your account has access to it."
-                    f"{suggestion_text}"
+                    (
+                        f"Note: `{requested}` was not found in the OpenAI Codex model listing. "
+                        f"It may still work if your account has access to it."
+                        f"{suggestion_text}"
+                    )
+                    if not strict
+                    else (
+                        f"Rejected: `{requested}` was not found in the OpenAI Codex model listing."
+                        f"{suggestion_text}"
+                    )
                 ),
             }
 
@@ -1945,13 +1989,20 @@ def validate_requested_model(
                 suggestion_text = "\n  Similar models: " + ", ".join(f"`{s}`" for s in suggestions)
 
             return {
-                "accepted": True,
-                "persist": True,
+                "accepted": not strict,
+                "persist": not strict,
                 "recognized": False,
                 "message": (
-                    f"Note: `{requested}` was not found in this provider's model listing. "
-                    f"It may still work if your plan supports it."
-                    f"{suggestion_text}"
+                    (
+                        f"Note: `{requested}` was not found in this provider's model listing. "
+                        f"It may still work if your plan supports it."
+                        f"{suggestion_text}"
+                    )
+                    if not strict
+                    else (
+                        f"Rejected: `{requested}` was not found in this provider's model listing."
+                        f"{suggestion_text}"
+                    )
                 ),
             }
 
@@ -1959,11 +2010,17 @@ def validate_requested_model(
     # but warn so typos don't silently break things.
     provider_label = _PROVIDER_LABELS.get(normalized, normalized)
     return {
-        "accepted": True,
-        "persist": True,
+        "accepted": not strict,
+        "persist": not strict,
         "recognized": False,
         "message": (
-            f"Could not reach the {provider_label} API to validate `{requested}`. "
-            f"If the service isn't down, this model may not be valid."
+            (
+                f"Could not reach the {provider_label} API to validate `{requested}`. "
+                f"If the service isn't down, this model may not be valid."
+            )
+            if not strict
+            else (
+                f"Rejected: could not reach the {provider_label} API to validate `{requested}`."
+            )
         ),
     }
