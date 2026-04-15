@@ -107,6 +107,11 @@ from agent.trajectory import (
     save_trajectory as _save_trajectory_to_file,
 )
 from utils import atomic_json_write, env_var_enabled
+from hermes_cli.model_health import (
+    get_last_known_working_model as _get_last_known_working_model,
+    record_model_failure as _record_model_failure,
+    record_model_success as _record_model_success,
+)
 
 
 
@@ -1003,6 +1008,33 @@ class AIAgent:
             self._fallback_chain = [fallback_model]
         else:
             self._fallback_chain = []
+        try:
+            _last_good = _get_last_known_working_model(
+                exclude_provider=self.provider,
+                exclude_model=self.model,
+                exclude_base_url=self.base_url,
+            )
+            if _last_good:
+                _exists = any(
+                    (f.get("provider", "") or "").strip().lower()
+                    == (_last_good.get("provider", "") or "").strip().lower()
+                    and (f.get("model", "") or "").strip()
+                    == (_last_good.get("model", "") or "").strip()
+                    and (f.get("base_url", "") or "").strip().rstrip("/")
+                    == (_last_good.get("base_url", "") or "").strip().rstrip("/")
+                    for f in self._fallback_chain
+                    if isinstance(f, dict)
+                )
+                if not _exists and _last_good.get("provider") and _last_good.get("model"):
+                    self._fallback_chain.append(
+                        {
+                            "provider": _last_good["provider"],
+                            "model": _last_good["model"],
+                            "base_url": _last_good.get("base_url", ""),
+                        }
+                    )
+        except Exception:
+            pass
         self._fallback_index = 0
         self._fallback_activated = False
         # Legacy attribute kept for backward compat (tests, external callers)

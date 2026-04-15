@@ -64,6 +64,7 @@ from agent.usage_pricing import (
     format_token_count_compact,
 )
 from hermes_cli.banner import _format_context_length, format_banner_version_label
+from hermes_cli.model_health import maybe_start_periodic_health_check_async
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
@@ -243,6 +244,10 @@ def load_cli_config() -> Dict[str, Any]:
             "max_simple_chars": 160,
             "max_simple_words": 28,
             "cheap_model": {},
+        },
+        "model_health": {
+            "enabled": True,
+            "check_interval_hours": 24,
         },
         "agent": {
             "max_turns": 90,  # Default max tool-calling iterations (shared with subagents)
@@ -1769,6 +1774,10 @@ class HermesCLI:
         # Optional cheap-vs-strong routing for simple turns
         self._smart_model_routing = CLI_CONFIG.get("smart_model_routing", {}) or {}
         self._active_agent_route_signature = None
+        try:
+            maybe_start_periodic_health_check_async(CLI_CONFIG)
+        except Exception:
+            pass
 
         # Agent will be initialized on first use
         self.agent: Optional[AIAgent] = None
